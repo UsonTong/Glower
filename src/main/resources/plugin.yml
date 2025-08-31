@@ -1,0 +1,6 @@
+main: ${project.groupId}.${project.artifactId}
+name: ${project.artifactId}
+version: ${project.version}
+depend: [ ProtocolLib ]
+commands:
+  glower:
