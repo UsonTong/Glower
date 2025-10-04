@@ -17,8 +17,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class Glower extends JavaPlugin {
-
-    private final Map<UUID, Set<BukkitTask>> activeTasks = new ConcurrentHashMap<>();
+    private final Map<UUID, Map<UUID, BukkitTask>> activeTasks = new ConcurrentHashMap<>();
     private static final Map<String, ChatColor> COLOR_MAP = new HashMap<>();
 
     //初始化颜色
@@ -51,7 +50,9 @@ public class Glower extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        activeTasks.values().forEach(tasks -> tasks.forEach(BukkitTask::cancel));
+        // 取消所有任务
+        activeTasks.values().forEach(targetMap ->
+                targetMap.values().forEach(BukkitTask::cancel));
         activeTasks.clear();
     }
 
@@ -103,6 +104,7 @@ public class Glower extends JavaPlugin {
         Player target = getServer().getPlayer(args[2]);
 
         if (validatePlayers(observer, target)) {
+            cancelExistingTask(observer.getUniqueId(), target.getUniqueId());
             setGlowing(observer, target, false, null);
         }
         return true;
@@ -126,15 +128,41 @@ public class Glower extends JavaPlugin {
     }
 
     private void scheduleCancel(Player observer, Player target, int ticks) {
+        UUID observerId = observer.getUniqueId();
+        UUID targetId = target.getUniqueId();
+
+        // 先取消同一观察者对同一目标的旧任务
+        cancelExistingTask(observerId, targetId);
+
         final BukkitTask[] taskHolder = new BukkitTask[1];
 
         BukkitTask task = Bukkit.getScheduler().runTaskLater(this, () -> {
             setGlowing(observer, target, false, null);
-            removeTask(observer.getUniqueId(), taskHolder[0]);
+            removeTask(observerId, targetId, taskHolder[0]);
         }, ticks);
 
         taskHolder[0] = task;
-        addTask(observer.getUniqueId(), task);
+        addTask(observerId, targetId, task);
+    }
+
+    //取消现有任务
+    private void cancelExistingTask(UUID observerId, UUID targetId) {
+        Map<UUID, BukkitTask> targetTasks = activeTasks.get(observerId);
+        if (targetTasks != null) {
+            BukkitTask oldTask = targetTasks.remove(targetId);
+            if (oldTask != null) {
+                oldTask.cancel();
+            }
+            if (targetTasks.isEmpty()) {
+                activeTasks.remove(observerId);
+            }
+        }
+    }
+
+    //添加任务
+    private void addTask(UUID observerId, UUID targetId, BukkitTask task) {
+        activeTasks.computeIfAbsent(observerId, k -> new ConcurrentHashMap<>())
+                .put(targetId, task);
     }
 
     //解析颜色
@@ -156,18 +184,17 @@ public class Glower extends JavaPlugin {
         }
     }
 
-    //添加任务
-    private void addTask(UUID observerId, BukkitTask task) {
-        activeTasks.computeIfAbsent(observerId, k -> ConcurrentHashMap.newKeySet()).add(task);
-    }
-
     //移除任务
-    private void removeTask(UUID observerId, BukkitTask task) {
-        Set<BukkitTask> tasks = activeTasks.get(observerId);
-        if (tasks != null) {
-            tasks.remove(task);
-            if (tasks.isEmpty()) {
-                activeTasks.remove(observerId);
+    private void removeTask(UUID observerId, UUID targetId, BukkitTask task) {
+        Map<UUID, BukkitTask> targetTasks = activeTasks.get(observerId);
+        if (targetTasks != null) {
+            // 确保只移除指定的任务
+            BukkitTask storedTask = targetTasks.get(targetId);
+            if (storedTask != null && storedTask.equals(task)) {
+                targetTasks.remove(targetId);
+                if (targetTasks.isEmpty()) {
+                    activeTasks.remove(observerId);
+                }
             }
         }
     }
